@@ -1,7 +1,7 @@
 use crate::{storage, DataKey, MAX_VOTERS};
 use predictx_shared::{
     PollStatus, PredictXError, VoteChoice, VoteTally, AUTO_RESOLVE_THRESHOLD_BPS, BPS_DENOMINATOR,
-    VOTING_WINDOW_SECS,
+    TEMPORARY_STORAGE_EXTEND_TO_SECS, TEMPORARY_STORAGE_TTL_SECS, VOTING_WINDOW_SECS,
 };
 use soroban_sdk::{Address, Env, Symbol};
 
@@ -17,6 +17,13 @@ use soroban_sdk::{Address, Env, Symbol};
 ///    the tally.
 ///
 /// Out of scope for this change (tracked in separate issues): excluding stakers.
+/// Extends the TTL of a temporary storage entry so it survives past the
+/// voting window. Re‑arms the TTL to the configured extend‑to value.
+fn bump_ttl(env: &Env, key: &DataKey) {
+    env.storage().temporary().extend_ttl(key, TEMPORARY_STORAGE_TTL_SECS as u32, TEMPORARY_STORAGE_EXTEND_TO_SECS as u32);
+}
+
+/// Record a voter's choice on a poll.
 pub fn cast_vote(
     env: &Env,
     voter: Address,
@@ -76,6 +83,8 @@ pub fn cast_vote(
     voters.push_back(voter.clone());
     storage::write_voters(env, poll_id, &voters);
     storage::write_voted(env, poll_id, &voter);
+    bump_ttl(env, &DataKey::VoteTally(poll_id));
+    bump_ttl(env, &DataKey::HasVoted(poll_id, voter.clone()));
     // Persist the choice itself (not just the count) so reward eligibility can
     // be checked against the resolved outcome later.
     storage::write_vote_choice(env, poll_id, &voter, choice);
@@ -202,6 +211,7 @@ pub fn auto_resolve(env: &Env, poll_id: u64) -> Result<VoteChoice, PredictXError
         return Err(PredictXError::VotingNotOpen);
     }
 
+    bump_ttl(env, &DataKey::VoteTally(poll_id));
     let tally = storage::read_tally(env, poll_id).ok_or(PredictXError::PollNotFound)?;
     if env.ledger().timestamp() < tally.voting_end_time {
         return Err(PredictXError::VotingNotOpen);

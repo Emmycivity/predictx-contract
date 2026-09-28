@@ -4,7 +4,7 @@ pub const PLATFORM_FEE_BPS: u32 = 500;
 /// Maximum voter reward in basis points. `100` = 1%.
 pub const VOTER_REWARD_BPS: u32 = 100;
 
-/// Duration of the community voting window in seconds. `7_200` = 2 hours.
+/// Duration of the voting window in seconds. `7_200` = 2 hours.
 pub const VOTING_WINDOW_SECS: u64 = 7_200;
 
 /// Duration of the dispute window in seconds. `86_400` = 24 hours.
@@ -33,3 +33,11 @@ pub const EMERGENCY_TIMEOUT_SECS: u64 = 604_800;
 
 /// Minimum stake amount in token base units. `10_000_000` = 10 tokens (7 decimal places).
 pub const MIN_STAKE_AMOUNT: i128 = 10_000_000;
+
+/// TTL threshold for temporary storage entries (VoteTally, HasVoted).
+/// Must exceed VOTING_WINDOW_SECS to prevent premature expiry.
+pub const TEMPORARY_STORAGE_TTL_SECS: u64 = 14_400; // 4 hours
+
+/// Target TTL extend-to value for temporary storage entries.
+/// Used to re-arm the TTL before it expires.
+pub const TEMPORARY_STORAGE_EXTEND_TO_SECS: u64 = 17_280; // 4.8 hours > 2 hours voting window

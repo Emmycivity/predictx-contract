@@ -78,7 +78,10 @@ pub fn has_voted(env: &Env, poll_id: u64, voter: &Address) -> bool {
 /// Record that `voter` cast a vote on `poll_id`.
 ///
 /// The marker lives in *temporary* storage so it expires with the tally when
-/// the voting window closes.
+/// the voting window closes. However, the TTL is proactively extended by
+/// `bump_ttl` in `cast_vote` and `auto_resolve` to prevent premature expiry
+/// and ensure the dedup marker survives until the poll is resolved or the
+/// voting window closes naturally.
 pub fn write_voted(env: &Env, poll_id: u64, voter: &Address) {
     env.storage()
         .temporary()

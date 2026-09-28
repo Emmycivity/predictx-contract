@@ -5,6 +5,8 @@ mod voting;
 
 use predictx_shared::{PollStatus, PredictXError, VoteChoice, VoteTally, VOTING_WINDOW_SECS};
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Vec};
+#[cfg(test)]
+use soroban_sdk::testutils::Ledger;
 
 /// Maximum number of admins that may be registered at once.
 ///
