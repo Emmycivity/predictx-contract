@@ -137,3 +137,20 @@ pub fn write_reward_claimed(env: &Env, poll_id: u64, voter: &Address) {
         .persistent()
         .set(&DataKey::RewardClaimed(poll_id, voter.clone()), &true);
 }
+
+// ── Market poll registration ──────────────────────────────────────────────────
+
+/// Whether a poll is registered with the oracle.
+pub fn is_poll_registered(env: &Env, market_id: u64, poll_id: u64) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::MarketPoll(market_id, poll_id))
+        .unwrap_or(false)
+}
+
+/// Register a poll with the oracle, associating it with a market owner.
+pub fn register_poll(env: &Env, market_id: u64, poll_id: u64) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::MarketPoll(market_id, poll_id), &true);
+}

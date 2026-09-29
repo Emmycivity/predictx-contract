@@ -31,6 +31,7 @@ enum DataKey {
     Admin,
     /// Registered admins `Vec<Address>`. (Instance)
     AdminList,
+    MarketPoll(u64, u64),
     PollStatus(u64),
     /// `poll_id` → vote tally. (Temporary — only needed during the voting window)
     VoteTally(u64),
