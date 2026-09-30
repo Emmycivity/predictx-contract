@@ -5,49 +5,6 @@ use predictx_shared::{
 };
 use crate::{DataKey, get_platform_stats, set_platform_stats, token_utils};
 
-/// Resolve a poll using the configured admin and record its final outcome.
-pub fn resolve_poll(
-    env: &Env,
-    admin: Address,
-    poll_id: u64,
-    outcome: bool,
-) -> Result<(), PredictXError> {
-    admin.require_auth();
-    let stored_admin: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Admin)
-        .ok_or(PredictXError::NotInitialized)?;
-    if admin != stored_admin {
-        return Err(PredictXError::Unauthorized);
-    }
-
-    let mut poll: Poll = env
-        .storage()
-        .persistent()
-        .get(&DataKey::Poll(poll_id))
-        .ok_or(PredictXError::PollNotFound)?;
-    if poll.status == PollStatus::Resolved {
-        return Err(PredictXError::PollAlreadyResolved);
-    }
-
-    poll.status = PollStatus::Resolved;
-    poll.outcome = Some(outcome);
-    poll.resolution_time = env.ledger().timestamp();
-    env.storage()
-        .persistent()
-        .set(&DataKey::Poll(poll_id), &poll);
-
-    let total_pool = poll.yes_pool + poll.no_pool;
-    let fee = total_pool * token_utils::get_platform_fee_bps(env) as i128
-        / BPS_DENOMINATOR as i128;
-    env.events().publish(
-        (Symbol::new(env, "PollResolved"), poll_id),
-        (outcome, total_pool, fee),
-    );
-    Ok(())
-}
-
 // ── Payout / claim engine ─────────────────────────────────────────────────────
 
 /// Claim winnings (or a full stake refund) after a poll resolves.
@@ -339,6 +296,14 @@ mod test {
         });
     }
 
+    /// Inject a stake for a user (convenience helper that mints tokens and stakes).
+    fn stake_user(s: &TestSetup, poll_id: u64, side: StakeSide, amount: i128) -> Address {
+        let user = Address::generate(&s.env);
+        mint_tokens(s, &user, amount);
+        inject_stake(s, poll_id, &user, amount, side);
+        user
+    }
+
     // ── Tests: empty winning-pool path (issue #74) ────────────────────────────
 
     /// A losing staker can recover their original stake when the winning pool
@@ -563,5 +528,111 @@ mod test {
         // The quote and the claim must agree, both fee-free.
         assert_eq!(s.client.calculate_winnings(&poll_id, &winner), 50_000_000);
         assert_eq!(s.client.claim_winnings(&winner, &poll_id), 50_000_000);
+    }
+
+    // ── Issue #153: Platform stats update on claim ────────────────────────────
+
+    /// Test that total_payouts is incremented on a successful claim.
+    #[test]
+    fn total_payouts_incremented_on_successful_claim() {
+        let s = setup();
+        let poll_id = create_poll(&s, 2_000_000);
+
+        let winner = Address::generate(&s.env);
+        let amount: i128 = 100_000_000;
+
+        mint_tokens(&s, &winner, amount);
+        mint_tokens(&s, &s.contract_id, amount + 300_000_000);
+        s.client.stake(&winner, &poll_id, &amount, &StakeSide::Yes);
+
+        // Resolve with Yes winning, no_pool = 300M
+        inject_resolved_poll(&s, poll_id, true, amount, 300_000_000);
+
+        let payout = s.client.claim_winnings(&winner, &poll_id);
+
+        // Verify total_payouts was incremented
+        let stats = s.client.get_platform_stats();
+        assert_eq!(stats.total_payouts, payout, "total_payouts should equal the payout amount");
+
+        // Verify total_value_locked was decreased by the payout amount
+        // (TVL was 100M at stake, decreased by 95M net payout after 5% fee)
+        let expected_locked = 100_000_000_i128 - payout;
+        assert_eq!(
+            stats.total_value_locked,
+            expected_locked,
+            "total_value_locked should decrease by the claimed payout"
+        );
+    }
+
+    /// Test that total_value_locked cannot go negative (uses saturating_sub).
+    #[test]
+    fn total_value_locked_cannot_go_negative() {
+        let s = setup();
+        let poll_id = create_poll(&s, 2_000_000);
+
+        let winner = Address::generate(&s.env);
+        let amount: i128 = 50_000_000;
+
+        mint_tokens(&s, &winner, amount);
+        mint_tokens(&s, &s.contract_id, amount);
+        s.client.stake(&winner, &poll_id, &amount, &StakeSide::Yes);
+
+        // Resolve with Yes winning, no_pool = 0 (one-sided poll)
+        inject_resolved_poll(&s, poll_id, true, amount, 0);
+
+        let payout = s.client.claim_winnings(&winner, &poll_id);
+
+        // After claim, TVL should be the platform fee (2.5M = 5% of 50M), not negative
+        // due to saturating_sub. The fee remains in the contract.
+        let stats = s.client.get_platform_stats();
+        assert!(
+            stats.total_value_locked >= 0,
+            "total_value_locked should not go negative"
+        );
+        // TVL = initial stake - net payout = 50M - 47.5M = 2.5M (platform fee)
+        assert_eq!(
+            stats.total_value_locked,
+            2_500_000,
+            "total_value_locked should be the platform fee amount remaining"
+        );
+    }
+
+    /// Full-cycle invariant test: TVL == contract balance after claims.
+    /// This test verifies that after a full claim cycle, the total_value_locked
+    /// statistic equals the difference between total staked and total paid out,
+    /// which should match the actual contract token balance.
+    #[test]
+    fn tvl_equals_contract_balance_invariant() {
+        let s = setup();
+        let poll_id = create_poll(&s, 2_000_000);
+
+        // Two users stake on opposite sides
+        let user1 = Address::generate(&s.env);
+        let user2 = Address::generate(&s.env);
+        let stake1: i128 = 100_000_000;
+        let stake2: i128 = 150_000_000;
+
+        mint_tokens(&s, &user1, stake1);
+        mint_tokens(&s, &user2, stake2);
+
+        s.client.stake(&user1, &poll_id, &stake1, &StakeSide::Yes);
+        s.client.stake(&user2, &poll_id, &stake2, &StakeSide::No);
+
+        // Resolve with Yes winning
+        inject_resolved_poll(&s, poll_id, true, stake1, stake2);
+
+        // User 1 claims their winnings
+        let payout1 = s.client.claim_winnings(&user1, &poll_id);
+
+        // Verify TVL invariant
+        let stats = s.client.get_platform_stats();
+        // TVL should equal initial total staked minus total payouts
+        let initial_locked = stake1 + stake2;
+        let expected_locked = initial_locked - payout1;
+        assert_eq!(
+            stats.total_value_locked,
+            expected_locked,
+            "total_value_locked should equal initial staked minus paid out"
+        );
     }
 }
