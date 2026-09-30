@@ -46,6 +46,8 @@ enum DataKey {
     VoterReward(u64, Address),
     /// `(poll_id, voter)` → `bool` — has the voter claimed their reward? (Persistent)
     RewardClaimed(u64, Address),
+    /// `(match_id, poll_id)` → namespaced poll registration.
+    MarketPoll(u64, u64),
 }
 
 fn get_admin(env: &Env) -> Result<Address, PredictXError> {
@@ -254,6 +256,24 @@ impl VotingOracle {
             .persistent()
             .get(&DataKey::PollOutcome(poll_id))
             .ok_or(PredictXError::PollNotFound)
+    }
+
+    /// Register a namespaced poll `(match_id, poll_id)` in the voting oracle.
+    ///
+    /// This makes the poll known to the oracle so that `can_vote` and
+    /// `cast_vote` can verify it belongs to an active match.
+    pub fn register_poll(env: Env, match_id: u64, poll_id: u64) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::MarketPoll(match_id, poll_id), &true);
+    }
+
+    /// Returns `true` if a poll `(match_id, poll_id)` is registered with the oracle.
+    pub fn is_poll_registered(env: Env, match_id: u64, poll_id: u64) -> bool {
+        env.storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::MarketPoll(match_id, poll_id))
+            .unwrap_or(false)
     }
 
     /// Set (fund) the voter reward reserve for `poll_id`. Admin only.

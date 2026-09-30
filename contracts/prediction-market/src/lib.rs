@@ -1,6 +1,7 @@
 #![no_std]
 
 mod matches;
+mod payouts;
 mod staking;
 pub(crate) mod token_utils;
 
@@ -297,6 +298,10 @@ impl PredictionMarket {
             .persistent()
             .set(&DataKey::Poll(poll_id), &poll);
 
+        let oracle_id = get_oracle(&env)?;
+        let oracle_client = voting_oracle::Client::new(&env, &oracle_id);
+        oracle_client.register_poll(&match_id, &poll_id);
+
         match_polls.push_back(poll_id);
         env.storage()
             .persistent()
@@ -335,6 +340,12 @@ impl PredictionMarket {
             .persistent()
             .get(&DataKey::Poll(poll_id))
             .ok_or(PredictXError::PollNotFound)?;
+
+        let oracle_id = get_oracle(&env)?;
+        let oracle_client = voting_oracle::Client::new(&env, &oracle_id);
+        if !oracle_client.is_poll_registered(&poll.match_id, &poll_id) {
+            return Err(PredictXError::PollNotFound);
+        }
 
         if poll.status == PollStatus::Resolved || poll.outcome.is_some() {
             return Err(PredictXError::PollAlreadyResolved);
@@ -454,15 +465,6 @@ impl PredictionMarket {
     }
 
     // ── Payouts ───────────────────────────────────────────────────────────────
-
-    pub fn resolve_poll(
-        env: Env,
-        admin: Address,
-        poll_id: u64,
-        outcome: bool,
-    ) -> Result<(), PredictXError> {
-        payouts::resolve_poll(&env, admin, poll_id, outcome)
-    }
 
     /// Claim winnings after a resolved poll.
     ///
