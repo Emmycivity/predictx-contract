@@ -1,8 +1,8 @@
 #![no_std]
 
 mod matches;
-mod payouts;
 mod staking;
+pub(crate) mod payouts;
 pub(crate) mod token_utils;
 
 use predictx_shared::{
