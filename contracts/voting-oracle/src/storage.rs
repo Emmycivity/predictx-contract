@@ -35,16 +35,17 @@ pub fn require_admin(env: &Env, caller: &Address) -> Result<(), PredictXError> {
 
 /// Read the vote tally for a poll, if one has been stored yet.
 ///
-/// Tally data lives in *temporary* storage: it is only needed during the
-/// voting window (matching the tier guidance in the shared `DataKey` layout).
+/// The tally lives in *persistent* storage. In temporary storage it could
+/// expire mid-window (silently resetting the counts so a late voter decides
+/// the outcome alone) or before `auto_resolve` runs (stranding the poll).
 pub fn read_tally(env: &Env, poll_id: u64) -> Option<VoteTally> {
-    env.storage().temporary().get(&DataKey::VoteTally(poll_id))
+    env.storage().persistent().get(&DataKey::VoteTally(poll_id))
 }
 
 /// Store the vote tally for a poll.
 pub fn write_tally(env: &Env, tally: &VoteTally) {
     env.storage()
-        .temporary()
+        .persistent()
         .set(&DataKey::VoteTally(tally.poll_id), tally);
 }
 
@@ -78,10 +79,7 @@ pub fn has_voted(env: &Env, poll_id: u64, voter: &Address) -> bool {
 /// Record that `voter` cast a vote on `poll_id`.
 ///
 /// The marker lives in *temporary* storage so it expires with the tally when
-/// the voting window closes. However, the TTL is proactively extended by
-/// `bump_ttl` in `cast_vote` and `auto_resolve` to prevent premature expiry
-/// and ensure the dedup marker survives until the poll is resolved or the
-/// voting window closes naturally.
+/// the voting window closes.
 pub fn write_voted(env: &Env, poll_id: u64, voter: &Address) {
     env.storage()
         .temporary()

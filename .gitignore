@@ -7,3 +7,5 @@ temp_interactive_push.bat
 .gitignore
 config.bat
 node_modules
+# Never track editor auto-run tasks (malware was once planted via one).
+.vscode/tasks.json
